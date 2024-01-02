@@ -16,7 +16,6 @@ RCT_EXPORT_METHOD(getExif:(NSString *)path resolver:(RCTPromiseResolveBlock)reso
 
 
     @try {
-
         if([path hasPrefix:@"assets-library"]) {
 
             ALAssetsLibraryAssetForURLResultBlock resultblock = ^(ALAsset *myasset)
@@ -37,20 +36,46 @@ RCT_EXPORT_METHOD(getExif:(NSString *)path resolver:(RCTPromiseResolveBlock)reso
                               NSLog(@"error couldn't get photo");
                           }];
 
-        } else {
+        } 
+        // Use PHPhotoLibrary if prefix is ph://
+        else if ([path hasPrefix:@"ph"]) {
+            NSString *localIdentifier = [path substringFromIndex:5];
+            PHFetchResult* assets = [PHAsset fetchAssetsWithLocalIdentifiers:@[localIdentifier] options:nil];
+            PHAsset *asset = assets.firstObject;
+            if (asset.mediaType != PHAssetMediaTypeImage) {
+                [NSException raise:@"Asset is not an image" format:@"Asset for provided local identifier %@* is not an image", localIdentifier];
+                return;
+            }
 
-            NSData* pngData = [NSData dataWithContentsOfFile:path];
+            [[PHImageManager defaultManager] requestImageDataForAsset:asset options:nil resultHandler:^(NSData * _Nullable imageData, NSString * _Nullable dataUTI, UIImageOrientation orientation, NSDictionary * _Nullable info) {
+                CGImageSourceRef mySourceRef = CGImageSourceCreateWithData((CFDataRef)imageData, NULL);
 
-            CGImageSourceRef mySourceRef = CGImageSourceCreateWithData((CFDataRef)pngData, NULL);
-            if (mySourceRef != NULL)
-            {
+                if (mySourceRef == NULL) {
+                    [NSException raise:@"Could not load image" format:@"The image could not be loaded"];
+                }
                 NSDictionary *exif = (__bridge NSDictionary *)CGImageSourceCopyPropertiesAtIndex(mySourceRef,0,NULL);
                 CFRelease(mySourceRef);
 
                 NSDictionary *mutableExif = [exif mutableCopy];
-                [mutableExif setValue:path forKey:@"originalUri"];
+                [mutableExif setValue:localIdentifier forKey:@"originalUri"];
                 resolve(mutableExif);
+            }];
+
+        }
+        else {
+
+            NSData* pngData = [NSData dataWithContentsOfFile:path];
+
+            CGImageSourceRef mySourceRef = CGImageSourceCreateWithData((CFDataRef)pngData, NULL);
+            if (mySourceRef == NULL) {
+                [NSException raise:@"Could not load image" format:@"The image could not be loaded"];
             }
+            NSDictionary *exif = (__bridge NSDictionary *)CGImageSourceCopyPropertiesAtIndex(mySourceRef,0,NULL);
+            CFRelease(mySourceRef);
+
+            NSDictionary *mutableExif = [exif mutableCopy];
+            [mutableExif setValue:path forKey:@"originalUri"];
+            resolve(mutableExif);
         }
 
     }
@@ -94,7 +119,52 @@ RCT_EXPORT_METHOD(getLatLong:(NSString *)path resolver:(RCTPromiseResolveBlock)r
                         NSLog(@"error couldn't get photo");
                     }];
 
-    } else {
+    } 
+    // handle ph:// files
+    else if ([path hasPrefix:@"ph"]) {
+        NSString *localIdentifier = [path substringFromIndex:5];
+        PHFetchResult* assets = [PHAsset fetchAssetsWithLocalIdentifiers:@[localIdentifier] options:nil];
+        PHAsset *asset = assets.firstObject;
+        if (asset.mediaType != PHAssetMediaTypeImage) {
+            [NSException raise:@"Asset is not an image" format:@"Asset for provided local identifier %@* is not an image", localIdentifier];
+            return;
+        }
+    
+        [[PHImageManager defaultManager] requestImageDataForAsset:asset options:nil resultHandler:^(NSData * _Nullable imageData, NSString * _Nullable dataUTI, UIImageOrientation orientation, NSDictionary * _Nullable info) {
+            CGImageSourceRef mySourceRef = CGImageSourceCreateWithData((CFDataRef)imageData, NULL);
+    
+            if (mySourceRef == NULL) {
+                [NSException raise:@"Could not load image" format:@"The image could not be loaded"];
+            }
+            NSDictionary *exif = (__bridge NSDictionary *)CGImageSourceCopyPropertiesAtIndex(mySourceRef,0,NULL);
+            CFRelease(mySourceRef);
+            NSDictionary *location = [exif objectForKey:(NSString *)kCGImagePropertyGPSDictionary];
+    
+            if (! location) {
+                return resolve(nil);
+            }
+    
+            NSNumber *latitude = [location objectForKey:@"Latitude"];
+            NSNumber *longitude = [location objectForKey:@"Longitude"];
+            NSString *latitudeRef = [location objectForKey:@"LatitudeRef"];
+            NSString *longitudeRef = [location objectForKey:@"LongitudeRef"];
+            
+            if ([@"S" isEqualToString:latitudeRef]) {
+                latitude = @(- latitude.doubleValue);
+            }
+            if ([@"W" isEqualToString:longitudeRef]) {
+                longitude = @(- longitude.doubleValue);
+            }
+    
+            NSMutableDictionary *latLongDict = [[NSMutableDictionary alloc] init];
+            [latLongDict setValue:latitude forKey:@"latitude"];
+            [latLongDict setValue:longitude forKey:@"longitude"];
+    
+            resolve(latLongDict);
+        }];
+    }
+    
+    else {
       NSData* pngData = [NSData dataWithContentsOfFile:path];
 
       CGImageSourceRef mySourceRef = CGImageSourceCreateWithData((CFDataRef)pngData, NULL);
